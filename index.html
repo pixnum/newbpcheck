@@ -50,16 +50,31 @@ const heartIcon=document.getElementById("heart");
 let values=[];let lastPeak=Date.now();let bpm=0;let track,torchOn=false;
 
 // Dark mode toggle
-toggle.addEventListener("click",()=>{document.body.classList.toggle("dark");
-toggle.textContent=document.body.classList.contains("dark")?"☀️":"🌙";});
+toggle.addEventListener("click",()=>{
+  document.body.classList.toggle("dark");
+  toggle.textContent=document.body.classList.contains("dark")?"☀️":"🌙";
+});
 
-// Flashlight toggle
+// Flashlight toggle (fixed)
 flashBtn.addEventListener("click",async()=>{
-  if(!track){output.innerText="Camera not ready yet.";return;}
+  if(!track || track.readyState!=='live'){
+    output.innerText="Camera not ready yet.";
+    return;
+  }
   const capabilities=track.getCapabilities();
-  if(!capabilities.torch){output.innerText="Flashlight not supported. Enable manually.";return;}
-  try{torchOn=!torchOn;await track.applyConstraints({advanced:[{torch:torchOn}]});
-  output.innerText=torchOn?"Flashlight ON 🔦 | Cover camera...":"Flashlight OFF";}catch(e){output.innerText="Failed to toggle flashlight";}});
+  if(!capabilities.torch){
+    output.innerText="Flashlight not supported. Enable manually.";
+    return;
+  }
+  try{
+    torchOn=!torchOn;
+    await track.applyConstraints({advanced:[{torch:torchOn}]});
+    output.innerText=torchOn?"Flashlight ON 🔦 | Keep finger on camera...":"Flashlight OFF | Keep finger on camera...";
+  }catch(e){
+    console.warn("Torch toggle failed:",e);
+    output.innerText="Could not toggle flashlight. Keep finger on camera...";
+  }
+});
 
 // Start camera
 async function startCamera(){
@@ -68,11 +83,17 @@ async function startCamera(){
     video.srcObject=stream;
     track=stream.getVideoTracks()[0];
     video.onloadedmetadata=()=>{video.play();canvas.width=canvas.offsetWidth;canvas.height=canvas.offsetHeight;processFrames();};
-  }catch(err){output.innerText="Camera access denied or not supported.";}}
+  }catch(err){output.innerText="Camera access denied or not supported.";}
+}
 
 // Heart rate detection + ECG waveform + blinking heart
 function processFrames(){
   function loop(){
+    if(!track || track.readyState!=='live'){
+      requestAnimationFrame(loop);
+      return;
+    }
+
     ctx.clearRect(0,0,canvas.width,canvas.height);
     ctx.drawImage(video,0,0,canvas.width,canvas.height);
     let frame=ctx.getImageData(0,0,canvas.width,canvas.height);
@@ -82,24 +103,28 @@ function processFrames(){
 
     // Peak detection
     let len=values.length;
-    if(len>10){let prev=values[len-2],curr=values[len-1],before=values[len-3];
+    if(len>10){
+      let prev=values[len-2],curr=values[len-1],before=values[len-3];
       if(curr<prev && prev>before){
         let now=Date.now();
         let delta=now-lastPeak;
         if(delta>300 && delta<2000){
           bpm=Math.round(60000/delta);lastPeak=now;
-          // Blink heart icon
           heartIcon.style.opacity=1;
           setTimeout(()=>{heartIcon.style.opacity=0;},200);
         }
       }
     }
 
-    if(bpm>40 && bpm<180){let sys=Math.round(100+(bpm/180)*40);let dia=Math.round(60+(bpm/180)*20);
-      output.innerHTML=`❤️ <span id="heart">❤</span> HR: ${bpm} bpm | BP (approx): ${sys}/${dia} mmHg`;}
-    else{output.innerHTML=`❤️ <span id="heart">❤</span> Detecting HR... Keep finger steady.`;}
+    if(bpm>40 && bpm<180){
+      let sys=Math.round(100+(bpm/180)*40);
+      let dia=Math.round(60+(bpm/180)*20);
+      output.innerHTML=`❤️ <span id="heart">❤</span> HR: ${bpm} bpm | BP (approx): ${sys}/${dia} mmHg`;
+    }else{
+      output.innerHTML=`❤️ <span id="heart">❤</span> Detecting HR... Keep finger steady.`;
+    }
 
-    // ECG-style waveform
+    // ECG waveform
     ctx.clearRect(0,0,canvas.width,canvas.height);
     ctx.beginPath();
     ctx.strokeStyle="lime";ctx.shadowColor="lime";ctx.shadowBlur=8;ctx.lineWidth=2;
@@ -110,8 +135,10 @@ function processFrames(){
     }
     ctx.stroke();
 
-    requestAnimationFrame(loop);}
-  loop();}
+    requestAnimationFrame(loop);
+  }
+  loop();
+}
 
 startCamera();
 </script>
