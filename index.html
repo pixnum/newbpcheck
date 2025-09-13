@@ -35,7 +35,7 @@ body.dark footer{color:#eee;}
   <video id="video" autoplay playsinline muted></video>
   <canvas id="waveform"></canvas>
   <button id="flashBtn" class="flash-btn">🔦 Toggle Flashlight</button>
-  <p id="output">❤️ <span id="heart">❤</span> HR: -- bpm | BP (approx): --</p>
+  <p id="output">❤️ <span id="heart">❤</span> HR: -- bpm | BP: --</p>
   <footer>© Codo 2025</footer>
 </div>
 <script>
@@ -47,7 +47,7 @@ const toggle=document.getElementById("darkToggle");
 const flashBtn=document.getElementById("flashBtn");
 const heartIcon=document.getElementById("heart");
 
-let values=[];let lastPeak=Date.now();let bpm=0;let track,torchOn=false;
+let values=[],lastPeak=Date.now(),bpm=0,track,torchOn=false;
 
 // Dark mode toggle
 toggle.addEventListener("click",()=>{
@@ -55,25 +55,18 @@ toggle.addEventListener("click",()=>{
   toggle.textContent=document.body.classList.contains("dark")?"☀️":"🌙";
 });
 
-// Flashlight toggle (fixed)
+// Flashlight toggle (safe)
 flashBtn.addEventListener("click",async()=>{
-  if(!track || track.readyState!=='live'){
-    output.innerText="Camera not ready yet.";
-    return;
-  }
+  if(!track || track.readyState!=='live') return;
   const capabilities=track.getCapabilities();
-  if(!capabilities.torch){
-    output.innerText="Flashlight not supported. Enable manually.";
-    return;
-  }
+  if(!capabilities.torch){output.innerText="Flashlight not supported."; return;}
   try{
     torchOn=!torchOn;
+    video.pause(); // Pause video to prevent freeze
     await track.applyConstraints({advanced:[{torch:torchOn}]});
+    video.play();
     output.innerText=torchOn?"Flashlight ON 🔦 | Keep finger on camera...":"Flashlight OFF | Keep finger on camera...";
-  }catch(e){
-    console.warn("Torch toggle failed:",e);
-    output.innerText="Could not toggle flashlight. Keep finger on camera...";
-  }
+  }catch(e){console.warn("Torch failed:",e); output.innerText="Could not toggle flashlight. Keep finger on camera...";}
 });
 
 // Start camera
@@ -86,55 +79,51 @@ async function startCamera(){
   }catch(err){output.innerText="Camera access denied or not supported.";}
 }
 
-// Heart rate detection + ECG waveform + blinking heart
+// Heart rate + ECG + blinking heart
 function processFrames(){
   function loop(){
-    if(!track || track.readyState!=='live'){
-      requestAnimationFrame(loop);
-      return;
-    }
+    if(video.readyState!==4){requestAnimationFrame(loop); return;}
+    try{
+      ctx.clearRect(0,0,canvas.width,canvas.height);
+      ctx.drawImage(video,0,0,canvas.width,canvas.height);
+      let frame=ctx.getImageData(0,0,canvas.width,canvas.height);
+      let sum=0; for(let i=0;i<frame.data.length;i+=4) sum+=frame.data[i];
+      let avg=sum/(frame.data.length/4);
+      values.push(avg); if(values.length>canvas.width) values.shift();
 
-    ctx.clearRect(0,0,canvas.width,canvas.height);
-    ctx.drawImage(video,0,0,canvas.width,canvas.height);
-    let frame=ctx.getImageData(0,0,canvas.width,canvas.height);
-    let sum=0;for(let i=0;i<frame.data.length;i+=4) sum+=frame.data[i];
-    let avg=sum/(frame.data.length/4);
-    values.push(avg);if(values.length>canvas.width) values.shift();
-
-    // Peak detection
-    let len=values.length;
-    if(len>10){
-      let prev=values[len-2],curr=values[len-1],before=values[len-3];
-      if(curr<prev && prev>before){
-        let now=Date.now();
-        let delta=now-lastPeak;
-        if(delta>300 && delta<2000){
-          bpm=Math.round(60000/delta);lastPeak=now;
-          heartIcon.style.opacity=1;
-          setTimeout(()=>{heartIcon.style.opacity=0;},200);
+      // Peak detection
+      let len=values.length;
+      if(len>10){
+        let prev=values[len-2], curr=values[len-1], before=values[len-3];
+        if(curr<prev && prev>before){
+          let now=Date.now();
+          let delta=now-lastPeak;
+          if(delta>300 && delta<2000){
+            bpm=Math.round(60000/delta); lastPeak=now;
+            heartIcon.style.opacity=1;
+            setTimeout(()=>heartIcon.style.opacity=0,200);
+          }
         }
       }
-    }
 
-    if(bpm>40 && bpm<180){
-      let sys=Math.round(100+(bpm/180)*40);
-      let dia=Math.round(60+(bpm/180)*20);
-      output.innerHTML=`❤️ <span id="heart">❤</span> HR: ${bpm} bpm | BP (approx): ${sys}/${dia} mmHg`;
-    }else{
-      output.innerHTML=`❤️ <span id="heart">❤</span> Detecting HR... Keep finger steady.`;
-    }
+      if(bpm>40 && bpm<180){
+        let sys=Math.round(100+(bpm/180)*40);
+        let dia=Math.round(60+(bpm/180)*20);
+        output.innerHTML=`❤️ <span id="heart">❤</span> HR: ${bpm} bpm | BP: ${sys}/${dia} mmHg`;
+      }else{
+        output.innerHTML=`❤️ <span id="heart">❤</span> Detecting HR... Keep finger steady.`;
+      }
 
-    // ECG waveform
-    ctx.clearRect(0,0,canvas.width,canvas.height);
-    ctx.beginPath();
-    ctx.strokeStyle="lime";ctx.shadowColor="lime";ctx.shadowBlur=8;ctx.lineWidth=2;
-    for(let i=0;i<values.length;i++){
-      let x=i;
-      let y=canvas.height/2-(values[i]-avg)*0.2;
-      if(i===0) ctx.moveTo(x,y); else ctx.lineTo(x,y);
-    }
-    ctx.stroke();
-
+      // ECG waveform
+      ctx.beginPath();
+      ctx.strokeStyle="lime"; ctx.shadowColor="lime"; ctx.shadowBlur=8; ctx.lineWidth=2;
+      for(let i=0;i<values.length;i++){
+        let x=i;
+        let y=canvas.height/2-(values[i]-avg)*0.2;
+        if(i===0) ctx.moveTo(x,y); else ctx.lineTo(x,y);
+      }
+      ctx.stroke();
+    }catch(err){console.warn("Frame error:",err);}
     requestAnimationFrame(loop);
   }
   loop();
